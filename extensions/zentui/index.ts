@@ -19,7 +19,7 @@ type FooterState = GitStatusSummary & {
 	tokenLabel: string;
 	costLabel: string;
 	runtime?: RuntimeInfo;
-	lastSubmitTime: number;
+	idleSince?: number;
 	metaLabel: string;
 	thinkingLabel: string;
 };
@@ -124,11 +124,15 @@ function formatRuntimeSegment(
 
 function formatElapsed(sinceMs: number): string {
 	const elapsed = Math.floor((Date.now() - sinceMs) / 1000);
-	if (elapsed < 60) return "0s";
+	if (elapsed < 60) return `${elapsed}s`;
 	const m = Math.floor(elapsed / 60);
 	const s = elapsed % 60;
 	if (m < 60) return `${m}m${s > 0 ? `${s}s` : ""}`;
 	return `${Math.floor(m / 60)}h${m % 60}m`;
+}
+
+function idleMinutes(sinceMs: number): number {
+	return Math.floor((Date.now() - sinceMs) / 60000);
 }
 
 function buildMetaLabel(provider: string, model: string): string {
@@ -156,7 +160,7 @@ export default function (pi: ExtensionAPI) {
 		tokenLabel: "↑0 ↓0",
 		costLabel: "$0.000",
 		runtime: undefined,
-		lastSubmitTime: Date.now(),
+		idleSince: Date.now(),
 		metaLabel: "Unknown no-model",
 		thinkingLabel: "",
 		...emptyGitStatus(),
@@ -213,10 +217,10 @@ export default function (pi: ExtensionAPI) {
 			return {
 				render(width: number): string[] {
 					const provider = colorize(ctx.ui.theme, "dim", state.providerLabel);
-					const model = colorize(ctx.ui.theme, "syntaxType", formatModelDisplay(state.modelLabel));
+					const model = colorize(ctx.ui.theme, "mdCode", formatModelDisplay(state.modelLabel));
 					const thinking = state.thinkingLabel;
 					const thinkingSuffix = thinking
-						? colorize(ctx.ui.theme, "syntaxType", ` (${thinking})`)
+						? colorize(ctx.ui.theme, "mdCode", ` (${thinking})`)
 						: "";
 					const content = `${provider} ${model}${thinkingSuffix}`;
 					const contentWidth = visibleWidth(content);
@@ -244,10 +248,12 @@ export default function (pi: ExtensionAPI) {
 				scheduleProjectRefresh(ctx);
 				tui.requestRender();
 			});
+			const tickInterval = setInterval(() => requestFooterRender?.(), 1000);
 			const separator = colorize(theme, currentConfig.colors.separator, " | ");
 
 			return {
 				dispose: () => {
+					clearInterval(tickInterval);
 					unsubscribeBranch();
 					requestFooterRender = undefined;
 				},
@@ -303,7 +309,14 @@ export default function (pi: ExtensionAPI) {
 						colorize(theme, contextColor, state.contextLabel),
 						colorize(theme, currentConfig.colors.tokens, state.tokenLabel),
 						colorize(theme, currentConfig.colors.cost, state.costLabel),
-						colorize(theme, currentConfig.colors.submitTime, formatElapsed(state.lastSubmitTime)),
+						colorize(theme, state.idleSince !== undefined
+							? idleMinutes(state.idleSince) >= 59
+								? "error"
+								: idleMinutes(state.idleSince) >= 55
+									? "warning"
+									: currentConfig.colors.submitTime
+							: currentConfig.colors.submitTime,
+							state.idleSince !== undefined ? formatElapsed(state.idleSince) : "--"),
 					].join(separator);
 
 					const leftWidth = visibleWidth(left);
@@ -363,7 +376,7 @@ export default function (pi: ExtensionAPI) {
 	const installUi = (ctx: ExtensionContext) => {
 		ensureConfigExists();
 		currentConfig = loadConfig();
-		patchUserMessageComponent(ctx.ui.theme, currentConfig.colors.trail ?? currentConfig.colors.rail);
+		patchUserMessageComponent(ctx.ui.theme, currentConfig.colors.rail);
 		installFooter(ctx);
 		installEditor(ctx);
 		updateMetaWidget = installMetaWidget(ctx);
@@ -377,13 +390,14 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("agent_start", async (_event, ctx) => {
 		state.busy = true;
+		state.idleSince = undefined;
 		syncState(ctx);
 		refresh();
 	});
 
 	pi.on("agent_end", async (_event, ctx) => {
 		state.busy = false;
-		state.lastSubmitTime = Date.now();
+		state.idleSince = Date.now();
 		syncState(ctx);
 		scheduleProjectRefresh(ctx);
 		updateMetaWidget?.();

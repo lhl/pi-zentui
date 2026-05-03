@@ -17,6 +17,7 @@ import { colorize } from "./config";
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
+const RAIL = "┃";
 const originalUserMessageRender = UserMessageComponent.prototype.render;
 
 type AutocompleteEditorInternals = {
@@ -70,8 +71,8 @@ export function patchUserMessageComponent(uiTheme: Theme, railColor: string = "a
 		const hasLeadingSpacer = baseLines.length > 1 && visibleWidth(baseLines[0] ?? "") === 0;
 		const leadingLines = hasLeadingSpacer ? [baseLines[0] ?? ""] : [];
 		const contentLines = hasLeadingSpacer ? baseLines.slice(1) : baseLines;
-		const rail = `${colorize(currentUiTheme, currentRailColor, "│")}\x1b[0m `;
-		const border = currentUiTheme.fg(currentRailColor === "accent" ? "borderMuted" : "border", "─".repeat(width));
+		const rail = `${colorize(currentUiTheme, currentRailColor, RAIL)}\x1b[0m `;
+		const border = currentUiTheme.fg("borderMuted", "─".repeat(width));
 		const styledLines = contentLines.map((line) => `${rail}${fillStyledLine(line, innerWidth)}`);
 
 		if (styledLines.length === 0) {
@@ -103,7 +104,7 @@ export class PolishedEditor extends CustomEditor {
 		railColor: string = "accent",
 	) {
 		super(tui, theme, keybindings, { paddingX: 0 });
-		this.borderColor = (text: string) => uiTheme.fg("border", text);
+		this.borderColor = (text: string) => uiTheme.fg("borderMuted", text);
 		this.uiTheme = uiTheme;
 		this.railColor = railColor;
 		this.getModelMeta = getModelMeta;
@@ -148,21 +149,14 @@ export class PolishedEditor extends CustomEditor {
 		}
 
 		const editorLines = editorFrame.slice(1, -1);
-		const metaParts = [this.getModelMeta()];
-		const thinkingLevel = this.getThinkingLevel();
-		if (thinkingLevel && thinkingLevel !== "off") {
-			metaParts.push(this.uiTheme.fg("muted", thinkingLevel));
-		}
-		const meta = metaParts.filter(Boolean).join(this.uiTheme.fg("border", "  "));
 
-		const rail = `${colorize(this.uiTheme, this.railColor, "│")}${this.reset} `;
-		const top = this.uiTheme.fg("border", "─".repeat(width));
-		const bottom = this.uiTheme.fg("border", "─".repeat(width));
-		const lines = ["", ...editorLines, "", meta];
+		const rail = `${colorize(this.uiTheme, this.railColor, RAIL)}${this.reset} `;
+		const top = this.uiTheme.fg("borderMuted", "─".repeat(width));
+		const bottom = this.uiTheme.fg("borderMuted", "─".repeat(width));
 
 		return [
 			top,
-			...lines.map((line) => `${rail}${this.fillLine(line, innerWidth)}`),
+			...editorLines.map((line) => `${rail}${this.fillLine(line, innerWidth)}`),
 			bottom,
 			...autocompleteLines,
 		];
