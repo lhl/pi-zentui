@@ -19,6 +19,9 @@ type FooterState = GitStatusSummary & {
 	tokenLabel: string;
 	costLabel: string;
 	runtime?: RuntimeInfo;
+	lastSubmitTime: number;
+	metaLabel: string;
+	thinkingLabel: string;
 };
 
 type UsageTotals = {
@@ -119,6 +122,24 @@ function formatRuntimeSegment(
 	return `${colorize(theme, mutedColor, "via")} ${colorize(theme, getRuntimeColorToken(runtime), label)}`;
 }
 
+function formatElapsed(sinceMs: number): string {
+	const elapsed = Math.floor((Date.now() - sinceMs) / 1000);
+	if (elapsed < 60) return "0s";
+	const m = Math.floor(elapsed / 60);
+	const s = elapsed % 60;
+	if (m < 60) return `${m}m${s > 0 ? `${s}s` : ""}`;
+	return `${Math.floor(m / 60)}h${m % 60}m`;
+}
+
+function buildMetaLabel(provider: string, model: string): string {
+	return `${provider} ${model}`;
+}
+
+function formatModelDisplay(modelId: string): string {
+	const slashIndex = modelId.lastIndexOf("/");
+	return slashIndex >= 0 ? modelId.slice(slashIndex + 1) : modelId;
+}
+
 function formatCwdLabel(cwd: string, cwdIcon: string): string {
 	const normalized = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
 	const parts = normalized.split("/").filter(Boolean);
@@ -135,6 +156,9 @@ export default function (pi: ExtensionAPI) {
 		tokenLabel: "↑0 ↓0",
 		costLabel: "$0.000",
 		runtime: undefined,
+		lastSubmitTime: Date.now(),
+		metaLabel: "Unknown no-model",
+		thinkingLabel: "",
 		...emptyGitStatus(),
 	};
 
@@ -142,6 +166,7 @@ export default function (pi: ExtensionAPI) {
 	let requestFooterRender: (() => void) | undefined;
 	let projectRefreshInFlight = false;
 	let projectRefreshPending = false;
+	let updateMetaWidget: (() => void) | undefined;
 
 	const refresh = () => requestFooterRender?.();
 
@@ -152,6 +177,9 @@ export default function (pi: ExtensionAPI) {
 		state.contextLabel = buildContextLabel(ctx);
 		state.tokenLabel = buildTokenLabel(totals);
 		state.costLabel = buildCostLabel(totals);
+		state.metaLabel = buildMetaLabel(state.providerLabel, state.modelLabel);
+		const tl = pi.getThinkingLevel();
+		state.thinkingLabel = tl && tl !== "off" ? tl : "";
 	};
 
 	const refreshProjectState = async (ctx: ExtensionContext) => {
@@ -178,6 +206,33 @@ export default function (pi: ExtensionAPI) {
 				scheduleProjectRefresh(ctx);
 			}
 		});
+	};
+
+	const installMetaWidget = (ctx: ExtensionContext) => {
+		const metaFactory = () => {
+			return {
+				render(width: number): string[] {
+					const provider = colorize(ctx.ui.theme, "dim", state.providerLabel);
+					const model = colorize(ctx.ui.theme, "syntaxType", formatModelDisplay(state.modelLabel));
+					const thinking = state.thinkingLabel;
+					const thinkingSuffix = thinking
+						? colorize(ctx.ui.theme, "syntaxType", ` (${thinking})`)
+						: "";
+					const content = `${provider} ${model}${thinkingSuffix}`;
+					const contentWidth = visibleWidth(content);
+					const pad = Math.max(0, width - contentWidth);
+					return [`${" ".repeat(pad)}${content}`];
+				},
+				invalidate() {},
+			};
+		};
+
+		ctx.ui.setWidget("zentui-meta", metaFactory, { placement: "aboveEditor" });
+
+		const updateWidget = () => {
+			ctx.ui.setWidget("zentui-meta", metaFactory, { placement: "aboveEditor" });
+		};
+		return updateWidget;
 	};
 
 	const installFooter = (ctx: ExtensionContext) => {
@@ -248,6 +303,7 @@ export default function (pi: ExtensionAPI) {
 						colorize(theme, contextColor, state.contextLabel),
 						colorize(theme, currentConfig.colors.tokens, state.tokenLabel),
 						colorize(theme, currentConfig.colors.cost, state.costLabel),
+						colorize(theme, currentConfig.colors.submitTime, formatElapsed(state.lastSubmitTime)),
 					].join(separator);
 
 					const leftWidth = visibleWidth(left);
@@ -280,12 +336,9 @@ export default function (pi: ExtensionAPI) {
 				theme,
 				keybindings,
 				ctx.ui.theme,
-				() =>
-					[
-						ctx.ui.theme.fg("accent", state.modelLabel),
-						ctx.ui.theme.fg("text", state.providerLabel),
-					].join(ctx.ui.theme.fg("borderMuted", "  ")),
+				() => "", // meta now in widget above editor
 				() => pi.getThinkingLevel(),
+				currentConfig.colors.rail,
 			);
 			currentEditor = editor;
 
@@ -310,9 +363,10 @@ export default function (pi: ExtensionAPI) {
 	const installUi = (ctx: ExtensionContext) => {
 		ensureConfigExists();
 		currentConfig = loadConfig();
-		patchUserMessageComponent(ctx.ui.theme);
+		patchUserMessageComponent(ctx.ui.theme, currentConfig.colors.trail ?? currentConfig.colors.rail);
 		installFooter(ctx);
 		installEditor(ctx);
+		updateMetaWidget = installMetaWidget(ctx);
 		scheduleProjectRefresh(ctx);
 		refresh();
 	};
@@ -329,19 +383,23 @@ export default function (pi: ExtensionAPI) {
 
 	pi.on("agent_end", async (_event, ctx) => {
 		state.busy = false;
+		state.lastSubmitTime = Date.now();
 		syncState(ctx);
 		scheduleProjectRefresh(ctx);
+		updateMetaWidget?.();
 		refresh();
 	});
 
 	pi.on("model_select", async (_event, ctx) => {
 		syncState(ctx);
+		updateMetaWidget?.();
 		refresh();
 	});
 
 	pi.on("message_end", async (_event, ctx) => {
 		syncState(ctx);
 		scheduleProjectRefresh(ctx);
+		updateMetaWidget?.();
 		refresh();
 	});
 

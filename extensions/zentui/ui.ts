@@ -12,6 +12,7 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@mariozechner/pi-tui";
+import { colorize } from "./config";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
@@ -24,6 +25,7 @@ type AutocompleteEditorInternals = {
 };
 
 let currentUiTheme: Theme | undefined;
+let currentRailColor: string = "accent";
 
 const TRUECOLOR_BACKGROUND_ANSI = /\x1b\[48;2;\d+;\d+;\d+m/g;
 const INDEXED_BACKGROUND_ANSI = /\x1b\[48;5;\d+m/g;
@@ -48,8 +50,9 @@ function fillStyledLine(
 	return `${truncated}${pad}`;
 }
 
-export function patchUserMessageComponent(uiTheme: Theme): void {
+export function patchUserMessageComponent(uiTheme: Theme, railColor: string = "accent"): void {
 	currentUiTheme = uiTheme;
+	currentRailColor = railColor;
 
 	const prototype = UserMessageComponent.prototype as {
 		render(width: number): string[];
@@ -67,8 +70,8 @@ export function patchUserMessageComponent(uiTheme: Theme): void {
 		const hasLeadingSpacer = baseLines.length > 1 && visibleWidth(baseLines[0] ?? "") === 0;
 		const leadingLines = hasLeadingSpacer ? [baseLines[0] ?? ""] : [];
 		const contentLines = hasLeadingSpacer ? baseLines.slice(1) : baseLines;
-		const rail = `${currentUiTheme.fg("accent", "│")}\x1b[0m `;
-		const border = currentUiTheme.fg("border", "─".repeat(width));
+		const rail = `${colorize(currentUiTheme, currentRailColor, "│")}\x1b[0m `;
+		const border = currentUiTheme.fg(currentRailColor === "accent" ? "borderMuted" : "border", "─".repeat(width));
 		const styledLines = contentLines.map((line) => `${rail}${fillStyledLine(line, innerWidth)}`);
 
 		if (styledLines.length === 0) {
@@ -87,6 +90,7 @@ export class PolishedEditor extends CustomEditor {
 	private readonly getModelMeta: () => string;
 	private readonly getThinkingLevel: () => string | undefined;
 	private readonly uiTheme: Theme;
+	private readonly railColor: string;
 	private readonly reset = "\x1b[0m";
 
 	constructor(
@@ -96,10 +100,12 @@ export class PolishedEditor extends CustomEditor {
 		uiTheme: Theme,
 		getModelMeta: () => string,
 		getThinkingLevel: () => string | undefined,
+		railColor: string = "accent",
 	) {
 		super(tui, theme, keybindings, { paddingX: 0 });
 		this.borderColor = (text: string) => uiTheme.fg("border", text);
 		this.uiTheme = uiTheme;
+		this.railColor = railColor;
 		this.getModelMeta = getModelMeta;
 		this.getThinkingLevel = getThinkingLevel;
 	}
@@ -149,7 +155,7 @@ export class PolishedEditor extends CustomEditor {
 		}
 		const meta = metaParts.filter(Boolean).join(this.uiTheme.fg("border", "  "));
 
-		const rail = `${this.uiTheme.fg("accent", "│")}${this.reset} `;
+		const rail = `${colorize(this.uiTheme, this.railColor, "│")}${this.reset} `;
 		const top = this.uiTheme.fg("border", "─".repeat(width));
 		const bottom = this.uiTheme.fg("border", "─".repeat(width));
 		const lines = ["", ...editorLines, "", meta];

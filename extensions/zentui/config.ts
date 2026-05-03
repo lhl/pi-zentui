@@ -30,6 +30,9 @@ export type PolishedTuiConfig = {
 		tokens: ColorSpec;
 		cost: ColorSpec;
 		separator: ColorSpec;
+		rail: ColorSpec;
+		border: ColorSpec;
+		submitTime: ColorSpec;
 	};
 };
 
@@ -109,6 +112,9 @@ export const defaultConfig: PolishedTuiConfig = {
 		tokens: "muted",
 		cost: "success",
 		separator: "borderMuted",
+		rail: "accent",
+		border: "borderMuted",
+		submitTime: "muted",
 	},
 };
 
