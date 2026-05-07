@@ -31,12 +31,32 @@ let currentRailColor = "accent";
 const TRUECOLOR_BACKGROUND_ANSI = /\x1b\[48;2;\d+;\d+;\d+m/g;
 const INDEXED_BACKGROUND_ANSI = /\x1b\[48;5;\d+m/g;
 const SIMPLE_BACKGROUND_ANSI = /\x1b\[(?:4\d|10[0-7]|49)m/g;
+const ANSI_ESCAPE =
+	/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|_[^\x07]*(?:\x07|\x1b\\))/g;
 
 function stripBackgroundAnsi(text: string): string {
 	return text
 		.replace(TRUECOLOR_BACKGROUND_ANSI, "")
 		.replace(INDEXED_BACKGROUND_ANSI, "")
 		.replace(SIMPLE_BACKGROUND_ANSI, "");
+}
+
+function stripAnsi(text: string): string {
+	return text.replace(ANSI_ESCAPE, "");
+}
+
+function isVisuallyBlank(line: string): boolean {
+	return stripAnsi(stripBackgroundAnsi(line)).trim().length === 0;
+}
+
+function trimBoxVerticalPadding(lines: string[]): string[] {
+	let start = 0;
+	let end = lines.length;
+
+	if (end - start > 1 && isVisuallyBlank(lines[start] ?? "")) start++;
+	if (end - start > 1 && isVisuallyBlank(lines[end - 1] ?? "")) end--;
+
+	return lines.slice(start, end);
 }
 
 function fillStyledLine(
@@ -70,7 +90,8 @@ export function patchUserMessageComponent(uiTheme: Theme, railColor = "accent"):
 
 		const hasLeadingSpacer = baseLines.length > 1 && visibleWidth(baseLines[0] ?? "") === 0;
 		const leadingLines = hasLeadingSpacer ? [baseLines[0] ?? ""] : [];
-		const contentLines = hasLeadingSpacer ? baseLines.slice(1) : baseLines;
+		const rawContentLines = hasLeadingSpacer ? baseLines.slice(1) : baseLines;
+		const contentLines = trimBoxVerticalPadding(rawContentLines);
 		const rail = `${colorize(currentUiTheme, currentRailColor, RAIL)}\x1b[0m `;
 		const border = currentUiTheme.fg("borderMuted", "─".repeat(width));
 		const styledLines = contentLines.map((line) => `${rail}${fillStyledLine(line, innerWidth)}`);
