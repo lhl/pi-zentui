@@ -1,5 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { emptyGitStatus, parseGitStatusPorcelain } from "../extensions/zentui/git";
+import {
+	LOCK_FREE_GIT_STASH_ARGS,
+	LOCK_FREE_GIT_STATUS_ARGS,
+	createLockFreeGitOptions,
+	emptyGitStatus,
+	parseGitStatusPorcelain,
+} from "../extensions/zentui/git";
+
+describe("lock-free git commands", () => {
+	it("disables optional locks for background status probes", () => {
+		expect(LOCK_FREE_GIT_STATUS_ARGS).toEqual([
+			"--no-optional-locks",
+			"status",
+			"--porcelain=2",
+			"--branch",
+		]);
+		expect(LOCK_FREE_GIT_STASH_ARGS).toEqual([
+			"--no-optional-locks",
+			"rev-parse",
+			"--verify",
+			"--quiet",
+			"refs/stash",
+		]);
+		expect(createLockFreeGitOptions("/repo")).toMatchObject({
+			cwd: "/repo",
+			env: { GIT_OPTIONAL_LOCKS: "0" },
+		});
+	});
+});
 
 describe("parseGitStatusPorcelain", () => {
 	it("returns empty status for empty output", () => {

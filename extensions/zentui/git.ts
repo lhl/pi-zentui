@@ -1,7 +1,31 @@
-import { execFile } from "node:child_process";
+import { type ExecFileOptions, execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+
+export const LOCK_FREE_GIT_STATUS_ARGS = [
+	"--no-optional-locks",
+	"status",
+	"--porcelain=2",
+	"--branch",
+];
+export const LOCK_FREE_GIT_STASH_ARGS = [
+	"--no-optional-locks",
+	"rev-parse",
+	"--verify",
+	"--quiet",
+	"refs/stash",
+];
+
+export function createLockFreeGitOptions(cwd: string): ExecFileOptions {
+	return {
+		cwd,
+		env: {
+			...process.env,
+			GIT_OPTIONAL_LOCKS: "0",
+		},
+	};
+}
 
 export type GitStatusSummary = {
 	branch?: string;
@@ -88,10 +112,10 @@ export function parseGitStatusPorcelain(stdoutText: string, hasStash: boolean): 
 export async function readGitStatus(cwd: string): Promise<GitStatusSummary> {
 	try {
 		const [{ stdout: statusStdout }, stashResult] = await Promise.all([
-			execFileAsync("git", ["status", "--porcelain=2", "--branch"], { cwd }),
-			execFileAsync("git", ["rev-parse", "--verify", "--quiet", "refs/stash"], { cwd }).catch(
-				() => ({ stdout: "" }),
-			),
+			execFileAsync("git", LOCK_FREE_GIT_STATUS_ARGS, createLockFreeGitOptions(cwd)),
+			execFileAsync("git", LOCK_FREE_GIT_STASH_ARGS, createLockFreeGitOptions(cwd)).catch(() => ({
+				stdout: "",
+			})),
 		]);
 		const stdoutText = typeof statusStdout === "string" ? statusStdout : String(statusStdout);
 		const stashStdout =
