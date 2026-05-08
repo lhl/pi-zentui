@@ -22,6 +22,7 @@ Zentui brings two popular aesthetics to Pi:
 - `[!?↑]` — git status indicators (modified, untracked, ahead/behind, stashed, etc.)
 - `via  v5.5.0` — runtime detection with version (Bun, Deno, Node, Python, Go, Rust, Lua, Java, Ruby, PHP)
 - Right side shows context usage, token counts, and cost
+- When the active model is `openai-codex` or `multicodex`, the cost slot is replaced with Codex quota remaining (`5h:82% · 7d:41% ↺2d4h`) from `pi-multicodex` status or the `pi-codex-status` cache
 
 ### Editor (Opencode-inspired)
 

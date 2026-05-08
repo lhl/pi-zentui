@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import type {
 	ExtensionAPI,
@@ -30,6 +33,36 @@ type UsageTotals = {
 	cost: number;
 };
 
+type CodexQuotaDisplay = {
+	fiveHourLeft?: number;
+	sevenDayLeft?: number;
+	resetText?: string;
+};
+
+type CodexStatusLimitWindow = {
+	leftPercent?: number;
+	usedPercent?: number;
+	resetAt?: number;
+};
+
+type CodexStatusCache = {
+	defaultLimit?: {
+		primary?: CodexStatusLimitWindow;
+		secondary?: CodexStatusLimitWindow;
+	};
+};
+
+type FooterDataLike = {
+	getExtensionStatuses?: () => ReadonlyMap<string, string>;
+};
+
+const CODEX_STATUS_CACHE_PATHS = [
+	join(homedir(), ".cache", "pi-codex-status", "usage.json"),
+	join(homedir(), ".cache", "pi-codex-usage", "usage.json"),
+];
+
+const ANSI_PATTERN = /\x1b\[[0-?]*[ -/]*[@-~]/g;
+
 function formatCount(value: number): string {
 	if (value < 1000) return `${value}`;
 	if (value < 10_000) return `${(value / 1000).toFixed(1)}k`;
@@ -46,6 +79,7 @@ function formatProviderLabel(provider: string | undefined): string {
 		ollama: "Ollama",
 		openai: "OpenAI",
 		"openai-codex": "OpenAI",
+		multicodex: "MultiCodex",
 	};
 
 	return (
@@ -75,6 +109,117 @@ function buildTokenLabel(totals: UsageTotals): string {
 
 function buildCostLabel(totals: UsageTotals): string {
 	return `$${totals.cost.toFixed(3)}`;
+}
+
+function isCodexModel(ctx: ExtensionContext): boolean {
+	const provider = ctx.model?.provider;
+	const modelId = ctx.model?.id ?? "";
+	return provider === "openai-codex" || provider === "multicodex" || /codex/i.test(modelId);
+}
+
+function normalizeRemainingPercent(window?: CodexStatusLimitWindow): number | undefined {
+	if (!window) return undefined;
+	if (typeof window.leftPercent === "number" && Number.isFinite(window.leftPercent)) {
+		return Math.max(0, Math.min(100, window.leftPercent));
+	}
+	if (typeof window.usedPercent === "number" && Number.isFinite(window.usedPercent)) {
+		return Math.max(0, Math.min(100, 100 - window.usedPercent));
+	}
+	return undefined;
+}
+
+function formatResetCountdown(resetAtMs: number | undefined): string | undefined {
+	if (typeof resetAtMs !== "number" || !Number.isFinite(resetAtMs)) return undefined;
+	const totalSeconds = Math.max(0, Math.round((resetAtMs - Date.now()) / 1000));
+	const days = Math.floor(totalSeconds / 86_400);
+	const hours = Math.floor((totalSeconds % 86_400) / 3_600);
+	const minutes = Math.floor((totalSeconds % 3_600) / 60);
+	const seconds = totalSeconds % 60;
+	if (days > 0) return `${days}d${hours}h`;
+	if (hours > 0) return `${hours}h${minutes}m`;
+	if (minutes > 0) return `${minutes}m`;
+	return `${seconds}s`;
+}
+
+function readCodexStatusCache(): CodexQuotaDisplay | undefined {
+	for (const cachePath of CODEX_STATUS_CACHE_PATHS) {
+		try {
+			if (!existsSync(cachePath)) continue;
+			const parsed = JSON.parse(readFileSync(cachePath, "utf8")) as CodexStatusCache;
+			const primary = parsed.defaultLimit?.primary;
+			const secondary = parsed.defaultLimit?.secondary;
+			const fiveHourLeft = normalizeRemainingPercent(primary);
+			const sevenDayLeft = normalizeRemainingPercent(secondary);
+			if (fiveHourLeft === undefined && sevenDayLeft === undefined) continue;
+			const resetAtSeconds = secondary?.resetAt ?? primary?.resetAt;
+			const resetAtMs = typeof resetAtSeconds === "number" ? resetAtSeconds * 1000 : undefined;
+			return {
+				fiveHourLeft,
+				sevenDayLeft,
+				resetText: formatResetCountdown(resetAtMs),
+			};
+		} catch {}
+	}
+	return undefined;
+}
+
+function stripAnsi(text: string): string {
+	return text.replace(ANSI_PATTERN, "");
+}
+
+function remainingPercentFromMatch(match: RegExpMatchArray | null): number | undefined {
+	if (!match) return undefined;
+	const value = Math.max(0, Math.min(100, Number(match[1])));
+	return match[2]?.toLowerCase() === "used" ? 100 - value : value;
+}
+
+function parseMulticodexFooterStatus(statusText: string): CodexQuotaDisplay | undefined {
+	const plain = stripAnsi(statusText);
+	const fiveHourMatch = plain.match(/5h:\s*(\d{1,3})%\s*(left|used)?/i);
+	const sevenDayMatch = plain.match(/7d:\s*(\d{1,3})%\s*(left|used)?/i);
+	const resetMatch = plain.match(/7d:[^↺]*↺([^\s)]+)/i) ?? plain.match(/↺([^\s)]+)/i);
+	const fiveHourLeft = remainingPercentFromMatch(fiveHourMatch);
+	const sevenDayLeft = remainingPercentFromMatch(sevenDayMatch);
+	if (fiveHourLeft === undefined && sevenDayLeft === undefined) return undefined;
+	return { fiveHourLeft, sevenDayLeft, resetText: resetMatch?.[1] };
+}
+
+function getCodexQuotaDisplay(footerData: FooterDataLike): CodexQuotaDisplay | undefined {
+	const statuses = footerData.getExtensionStatuses?.();
+	const multicodexStatus = statuses?.get("multicodex-usage");
+	if (multicodexStatus) {
+		const parsed = parseMulticodexFooterStatus(multicodexStatus);
+		if (parsed) return parsed;
+	}
+	return readCodexStatusCache();
+}
+
+function getQuotaPercentColor(percent: number | undefined): string {
+	if (typeof percent !== "number" || !Number.isFinite(percent)) return "dim";
+	if (percent < 5) return "error";
+	if (percent < 25) return "#ffaf00";
+	if (percent < 50) return "warning";
+	return "success";
+}
+
+function formatQuotaPercent(theme: Pick<Theme, "fg">, percent: number | undefined): string {
+	if (typeof percent !== "number" || !Number.isFinite(percent)) {
+		return colorize(theme, "dim", "--%");
+	}
+	return colorize(theme, getQuotaPercentColor(percent), `${Math.round(percent)}%`);
+}
+
+function formatCodexQuotaLabel(
+	theme: Pick<Theme, "fg">,
+	quota: CodexQuotaDisplay | undefined,
+): string | undefined {
+	if (!quota) return undefined;
+	const parts = [
+		`5h:${formatQuotaPercent(theme, quota.fiveHourLeft)}`,
+		`7d:${formatQuotaPercent(theme, quota.sevenDayLeft)}`,
+	];
+	if (quota.resetText) parts.push(colorize(theme, "muted", `↺${quota.resetText}`));
+	return parts.join(colorize(theme, "borderMuted", " · "));
 }
 
 function buildContextLabel(ctx: ExtensionContext): string {
@@ -219,9 +364,7 @@ export default function (pi: ExtensionAPI) {
 					const provider = colorize(ctx.ui.theme, "dim", state.providerLabel);
 					const model = colorize(ctx.ui.theme, "mdCode", formatModelDisplay(state.modelLabel));
 					const thinking = state.thinkingLabel;
-					const thinkingSuffix = thinking
-						? colorize(ctx.ui.theme, "mdCode", ` (${thinking})`)
-						: "";
+					const thinkingSuffix = thinking ? colorize(ctx.ui.theme, "mdCode", ` (${thinking})`) : "";
 					const content = `${provider} ${model}${thinkingSuffix}`;
 					const contentWidth = visibleWidth(content);
 					const pad = Math.max(0, width - contentWidth);
@@ -305,18 +448,24 @@ export default function (pi: ExtensionAPI) {
 					const runtimeLabel = formatRuntimeSegment(theme, state.runtime, "text");
 
 					const left = [cwdLabel, branchLabel, runtimeLabel].filter(Boolean).join(" ");
+					const codexQuotaLabel = isCodexModel(ctx)
+						? formatCodexQuotaLabel(theme, getCodexQuotaDisplay(footerData))
+						: undefined;
 					const right = [
 						colorize(theme, contextColor, state.contextLabel),
 						colorize(theme, currentConfig.colors.tokens, state.tokenLabel),
-						colorize(theme, currentConfig.colors.cost, state.costLabel),
-						colorize(theme, state.idleSince !== undefined
-							? idleMinutes(state.idleSince) >= 59
-								? "error"
-								: idleMinutes(state.idleSince) >= 55
-									? "warning"
-									: currentConfig.colors.submitTime
-							: currentConfig.colors.submitTime,
-							state.idleSince !== undefined ? formatElapsed(state.idleSince) : "--"),
+						codexQuotaLabel ?? colorize(theme, currentConfig.colors.cost, state.costLabel),
+						colorize(
+							theme,
+							state.idleSince !== undefined
+								? idleMinutes(state.idleSince) >= 59
+									? "error"
+									: idleMinutes(state.idleSince) >= 55
+										? "warning"
+										: currentConfig.colors.submitTime
+								: currentConfig.colors.submitTime,
+							state.idleSince !== undefined ? formatElapsed(state.idleSince) : "--",
+						),
 					].join(separator);
 
 					const leftWidth = visibleWidth(left);

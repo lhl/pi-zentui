@@ -26,7 +26,7 @@ type AutocompleteEditorInternals = {
 };
 
 let currentUiTheme: Theme | undefined;
-let currentRailColor: string = "accent";
+let currentRailColor = "accent";
 
 const TRUECOLOR_BACKGROUND_ANSI = /\x1b\[48;2;\d+;\d+;\d+m/g;
 const INDEXED_BACKGROUND_ANSI = /\x1b\[48;5;\d+m/g;
@@ -51,7 +51,7 @@ function fillStyledLine(
 	return `${truncated}${pad}`;
 }
 
-export function patchUserMessageComponent(uiTheme: Theme, railColor: string = "accent"): void {
+export function patchUserMessageComponent(uiTheme: Theme, railColor = "accent"): void {
 	currentUiTheme = uiTheme;
 	currentRailColor = railColor;
 
@@ -101,7 +101,7 @@ export class PolishedEditor extends CustomEditor {
 		uiTheme: Theme,
 		getModelMeta: () => string,
 		getThinkingLevel: () => string | undefined,
-		railColor: string = "accent",
+		railColor = "accent",
 	) {
 		super(tui, theme, keybindings, { paddingX: 0 });
 		this.borderColor = (text: string) => uiTheme.fg("borderMuted", text);
