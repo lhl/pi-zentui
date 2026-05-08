@@ -219,7 +219,7 @@ function formatCodexQuotaLabel(
 		`7d:${formatQuotaPercent(theme, quota.sevenDayLeft)}`,
 	];
 	if (quota.resetText) parts.push(colorize(theme, "muted", `↺${quota.resetText}`));
-	return parts.join(colorize(theme, "borderMuted", " · "));
+	return parts.join(" ");
 }
 
 function buildContextLabel(ctx: ExtensionContext): string {
